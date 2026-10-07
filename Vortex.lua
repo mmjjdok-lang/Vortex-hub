@@ -1,17 +1,19 @@
 --[[
 	=====================================================================
-	 ProUI Library v3 - مكتبة واجهة احترافية (Roblox LocalScript / Module)
+	 ProUI Library v3.1 - مكتبة واجهة احترافية (Roblox LocalScript / Module)
 	 هذا الملف مكتبة فقط (بدون إنشاء نافذة تلقائي). مثال الاستخدام بآخر الملف.
 
 	 الأنظمة:
-	   Library.CreateWindow(config)                     نافذة
-	   Window:CreateTab(name, emoji)                    تبويب (إيموجي مو آيكون)
-	   Tab:CreateButton / Toggle / Slider / Textbox / Dropdown / ColorPicker
-	   Tab:CreateNote(title, text, "Dark"|"Blue")       ملاحظة (تحتاج نافذة سليمة)
+	   Library.CreateWindow(config)                     نافذة (الافتراضي: Black)
+	   Window:CreateTab(name, emoji)                    تبويب
+	   Tab:CreateButton(name, desc, cb)                 زر عادي (داخل الواجهة)
+	   Tab:CreateSettingsButton(name, desc, cb, opts)   زر بإعدادات ⚙ (داخل الواجهة)
+	   Tab:CreateToggle / Slider / Textbox / Dropdown / ColorPicker
+	   Tab:CreateNote(title, text, "Dark"|"Blue")       ملاحظة
 	   Tab:CreateLabel(text, opts)                      Label بالنص
 	   Tab:CreateFoldout(name, buttons, open)           قائمة منسدلة للأزرار
-	   Tab:CreateSelector({"A","B"}, cb)                أزرار اختيارات بالنص (كل خيار صفحة)
-	   Library.CreateFloatButton(cfg)                   زر عايم (يسار) + إعداداته
+	   Tab:CreateSelector({"A","B"}, cb)                أزرار اختيارات (كل خيار صفحة)
+	   Library.CreateFloatButton(cfg)                   زر عايم (يسار الشاشة) + إعداداته
 	   Library.Notify(title,text,desc,duration,cb)      إشعار (شريط يتحرك + ضغط)
 	   Library.NotifyImage(title,text,{ids},desc,dur,cb) إشعار + صور (حد أقصى 3)
 	   Library.AddGradient({Target=...})                نظام التدرج المستقل
@@ -63,7 +65,7 @@ local WINDOW_SIG = {} -- بصمة فريدة: نافذة قديمة/مقلّدة
 
 local Library = {}
 -- لون الواجهة الحالي (الإشعارات تاخذ منه)
-local themeState = { accent = Color3.fromRGB(46, 224, 150), base = Color3.fromRGB(120, 50, 220) }
+local themeState = { accent = Color3.fromRGB(46, 224, 150), base = Color3.fromRGB(8, 8, 10) }
 
 --============================================================
 -- 2) الألوان والثوابت
@@ -155,6 +157,10 @@ local STRINGS = {
 		float_code_hint = "اكتب كود Lua هنا. لو تركته فاضي تشتغل الوظيفة من Callback بكود السكربت.",
 		float_saved = "تم حفظ وظيفة الزر",
 		float_code_err = "خطأ في كود الزر",
+		sb_enable = "تفعيل الزر",
+		sb_enable_desc = "مطفي = الزر ما يشتغل",
+		sb_hide = "إخفاء الزر",
+		sb_hide_desc = "يخفي الزر ويبقي ⚙ فقط",
 	},
 	en = {
 		close_title = "Confirm Script Deletion",
@@ -178,6 +184,10 @@ local STRINGS = {
 		float_code_hint = "Write Lua code here. Leave empty to use the Callback from your script.",
 		float_saved = "Button function saved",
 		float_code_err = "Button code error",
+		sb_enable = "Enable button",
+		sb_enable_desc = "Off = the button does nothing",
+		sb_hide = "Hide button",
+		sb_hide_desc = "Hides the button, keeps only ⚙",
 	},
 }
 local currentLang = "ar"
@@ -326,16 +336,21 @@ local function makeSingleTouchDraggable(hitArea, onUpdate)
 	end
 end
 
--- سحب أي Frame/زر. opts: Container, Threshold, OnDragFlag, CanDrag, OnBegin, OnEnd
+-- سحب أي Frame/زر (مصحّح: يعتمد على الفرق من نقطة البداية، فما يقفز مكانه).
+-- opts: Container, Threshold, OnDragFlag, CanDrag, OnBegin, OnEnd
 local function makeFrameDraggable(handle, target, opts)
 	opts = opts or {}
-	local threshold = opts.Threshold or 0
-	local active, startPtr, startAbs, dragged = nil, nil, nil, false
+	local threshold = opts.Threshold or 4
+	local active, startPtr, startPos, startAbs, dragged = nil, nil, nil, nil, false
 
 	handle.InputBegan:Connect(function(input)
 		if not isPointer(input) or active ~= nil then return end
 		if opts.CanDrag and not opts.CanDrag() then return end
-		active, startPtr, startAbs, dragged = input, ptr(input), target.AbsolutePosition, false
+		active = input
+		startPtr = ptr(input)
+		startPos = target.Position
+		startAbs = target.AbsolutePosition
+		dragged = false
 		if opts.OnDragFlag then opts.OnDragFlag(false) end
 	end)
 
@@ -344,6 +359,7 @@ local function makeFrameDraggable(handle, target, opts)
 		local p = ptr(input)
 		local dx, dy = p.X - startPtr.X, p.Y - startPtr.Y
 		if not dragged then
+			-- ما نبدأ سحب إلا لو الإصبع تحرك فعلاً (تجاهل الارتجاف)
 			if math.abs(dx) <= threshold and math.abs(dy) <= threshold then return end
 			dragged = true
 			if opts.OnDragFlag then opts.OnDragFlag(true) end
@@ -363,9 +379,9 @@ local function makeFrameDraggable(handle, target, opts)
 		end
 		local x = math.clamp(startAbs.X + dx, minX, math.max(maxX, minX))
 		local y = math.clamp(startAbs.Y + dy, minY, math.max(maxY, minY))
-		local anchor = target.AnchorPoint
-		local parentAbs = target.Parent and target.Parent.AbsolutePosition or Vector2.new(0, 0)
-		target.Position = UDim2.fromOffset(x - parentAbs.X + size.X * anchor.X, y - parentAbs.Y + size.Y * anchor.Y)
+		target.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + (x - startAbs.X),
+			startPos.Y.Scale, startPos.Y.Offset + (y - startAbs.Y))
 	end
 
 	endHandlers[#endHandlers + 1] = function(input)
@@ -873,7 +889,7 @@ Library.Destroy = function()
 end
 
 --============================================================
--- 9) مصنع العناصر (يُستخدم في التبويبات / القوائم المنسدلة / الخيارات / إعدادات الزر)
+-- 9) مصنع العناصر (التبويبات / القوائم المنسدلة / الخيارات / إعدادات الأزرار)
 --    ctx = { accent=Color3, window=Window|nil, popupDelta=function(+1/-1)|nil }
 --============================================================
 local makeElements
@@ -911,6 +927,7 @@ makeElements = function(container, ctx)
 	end
 
 	----------------------------------------------------------
+	-- زر عادي (داخل الواجهة)
 	function E:CreateButton(name, desc, callback)
 		if type(name) == "table" then
 			local o = name
@@ -957,6 +974,325 @@ makeElements = function(container, ctx)
 		api.SetText = function(_, t) nameLbl.Text = tostring(t) end
 		api.SetDesc = function(_, t) if descLbl then descLbl.Text = tostring(t) end end
 		api.Destroy = function() wrap:Destroy() end
+		return api
+	end
+
+	----------------------------------------------------------
+	-- زر بإعدادات ⚙ (داخل الواجهة): تفعيل / إخفاء / اسم / لون الحاجز / كود الوظيفة
+	-- Tab:CreateSettingsButton("اسم", "وصف", function() end, { Color="red", Code="print(1)", Enabled=true })
+	-- أو: Tab:CreateSettingsButton({ Name=, Desc=, Callback=, Color=, Code=, Enabled= })
+	function E:CreateSettingsButton(name, desc, callback, opts)
+		local o
+		if type(name) == "table" then
+			o = name
+			name, desc, callback = pick(o, "Name", "Title", "Text"), pick(o, "Desc", "Description"), pick(o, "Callback", "Function", "Func")
+		elseif type(desc) == "function" then
+			o = type(callback) == "table" and callback or {}
+			callback, desc = desc, nil
+		else
+			o = type(opts) == "table" and opts or {}
+		end
+		name = tostring(name or "Button")
+		desc = (desc ~= nil and tostring(desc) ~= "") and tostring(desc) or nil
+
+		local code = tostring(pick(o, "Code") or "")
+		local borderColor = resolveColor(pick(o, "Color", "BorderColor"), accent)
+		local enabled = pick(o, "Enabled") ~= false
+		local hidden = pick(o, "Hidden") == true
+		local fullH = desc and 52 or 36
+		local HIDDEN_H = 30
+
+		local wrap = newRow(fullH)
+		wrap.BackgroundTransparency = 0.9
+		wrap.ClipsDescendants = true
+		local bStroke = stroke(wrap, borderColor, 1.2, 0.5)
+		place(wrap)
+		registerTarget("ButtonBorders", wrap, "border")
+
+		local btn = Instance.new("TextButton")
+		btn.Text = ""
+		btn.AutoButtonColor = false
+		btn.BackgroundTransparency = 1
+		btn.Size = UDim2.new(1, -42, 1, 0)
+		btn.ZIndex = 8
+		btn.Parent = wrap
+
+		local nameLbl = newLabel(wrap, name, Enum.Font.GothamMedium, 14, WHITE,
+			UDim2.new(0, 12, 0, desc and 6 or 9), UDim2.new(1, -60, 0, 18), Enum.TextXAlignment.Left, 8)
+		nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+		local descLbl
+		if desc then
+			descLbl = newLabel(wrap, desc, Enum.Font.Gotham, 11, Color3.fromRGB(210, 210, 220),
+				UDim2.new(0, 12, 0, 26), UDim2.new(1, -60, 0, 18), Enum.TextXAlignment.Left, 8)
+			descLbl.TextTruncate = Enum.TextTruncate.AtEnd
+		end
+
+		local gear = Instance.new("TextButton")
+		gear.Text = "⚙"
+		gear.Font = Enum.Font.GothamBold
+		gear.TextSize = 15
+		gear.TextColor3 = WHITE
+		gear.AutoButtonColor = false
+		gear.BackgroundColor3 = WHITE
+		gear.BackgroundTransparency = 0.85
+		gear.AnchorPoint = Vector2.new(1, 0.5)
+		gear.Position = UDim2.new(1, -8, 0, fullH / 2)
+		gear.Size = UDim2.new(0, 26, 0, 26)
+		gear.ZIndex = 10
+		gear.Parent = wrap
+		round(gear, UDim.new(1, 0))
+		applyPressEffect(gear, 0.85)
+
+		applyPressEffect(btn, 0.96)
+
+		local api = { Instance = wrap }
+		local panel, funcPanel, panelOpen = nil, nil, false
+
+		local function applyState(animatedFlag)
+			local dim = not enabled
+			nameLbl.TextTransparency = dim and 0.6 or 0
+			if descLbl then descLbl.TextTransparency = dim and 0.6 or 0 end
+			bStroke.Transparency = dim and 0.88 or 0.5
+			btn.Visible = not hidden
+			nameLbl.Visible = not hidden
+			if descLbl then descLbl.Visible = not hidden end
+			local h = hidden and HIDDEN_H or fullH
+			local gp = UDim2.new(1, -8, 0, h / 2)
+			local sz = UDim2.new(1, 0, 0, h)
+			if animatedFlag then
+				tween(wrap, EASE_SOFT, { Size = sz })
+				tween(gear, EASE_SOFT, { Position = gp })
+			else
+				wrap.Size = sz
+				gear.Position = gp
+			end
+		end
+		applyState(false)
+
+		local function runCode()
+			if code == "" then return end
+			if not loadstring then
+				warn("[ProUI SettingsButton] loadstring غير متوفر في هذا المنفذ")
+				return
+			end
+			local fn, err = loadstring(code)
+			if not fn then
+				warn("[ProUI SettingsButton] " .. T("float_code_err") .. ":", err)
+				Library.Notify(T("float_code_err"), tostring(err), nil, 4)
+				return
+			end
+			local ok, e = pcall(fn)
+			if not ok then warn("[ProUI SettingsButton] " .. T("float_code_err") .. ":", e) end
+		end
+		local function fire()
+			if not enabled then return end
+			safe(callback, "SettingsButton")
+			runCode()
+		end
+		btn.Activated:Connect(fire)
+
+		-- خانة الكود
+		local function buildFuncPanel()
+			funcPanel = Instance.new("Frame")
+			funcPanel.BackgroundColor3 = COLOR_DARK
+			funcPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+			funcPanel.Position = UDim2.new(0.5, 0, 0.5, 0)
+			funcPanel.Size = UDim2.new(0, 300, 0, 250)
+			funcPanel.Active = true
+			funcPanel.Visible = false
+			funcPanel.ZIndex = 170
+			funcPanel.Parent = screenGui
+			round(funcPanel, UDim.new(0, 14))
+			stroke(funcPanel, COLOR_PURPLE, 1.2, 0.3)
+
+			local handle = Instance.new("Frame")
+			handle.BackgroundColor3 = WHITE
+			handle.BackgroundTransparency = 0.93
+			handle.Size = UDim2.new(1, 0, 0, 26)
+			handle.ZIndex = 171
+			handle.Parent = funcPanel
+			round(handle, UDim.new(0, 14))
+			newLabel(handle, T("float_code_title"), Enum.Font.GothamBold, 13, WHITE, UDim2.new(0, 12, 0, 0), UDim2.new(1, -24, 1, 0), Enum.TextXAlignment.Left, 172)
+			makeFrameDraggable(handle, funcPanel, {})
+
+			local hint = newLabel(funcPanel, T("float_code_hint"), Enum.Font.Gotham, 11, Color3.fromRGB(180, 180, 195),
+				UDim2.new(0, 12, 0, 32), UDim2.new(1, -24, 0, 28), Enum.TextXAlignment.Left, 171)
+			hint.TextWrapped = true
+			hint.TextYAlignment = Enum.TextYAlignment.Top
+
+			local box = Instance.new("TextBox")
+			box.Text = code
+			box.PlaceholderText = "print('Hello')"
+			box.PlaceholderColor3 = Color3.fromRGB(130, 130, 145)
+			box.Font = Enum.Font.Code
+			box.TextSize = 12
+			box.TextColor3 = WHITE
+			box.TextXAlignment = Enum.TextXAlignment.Left
+			box.TextYAlignment = Enum.TextYAlignment.Top
+			box.MultiLine = true
+			box.TextWrapped = true
+			box.ClearTextOnFocus = false
+			box.BackgroundColor3 = Color3.new(0, 0, 0)
+			box.BackgroundTransparency = 0.5
+			box.Position = UDim2.new(0, 12, 0, 64)
+			box.Size = UDim2.new(1, -24, 1, -112)
+			box.ZIndex = 171
+			box.Parent = funcPanel
+			round(box, UDim.new(0, 8))
+			local bp = Instance.new("UIPadding")
+			bp.PaddingLeft, bp.PaddingTop, bp.PaddingRight = UDim.new(0, 8), UDim.new(0, 6), UDim.new(0, 8)
+			bp.Parent = box
+
+			local save = Instance.new("TextButton")
+			save.Text = T("float_save")
+			save.Font = Enum.Font.GothamBold
+			save.TextSize = 13
+			save.TextColor3 = WHITE
+			save.AutoButtonColor = false
+			save.BackgroundColor3 = COLOR_GREEN
+			save.Position = UDim2.new(0, 12, 1, -40)
+			save.Size = UDim2.new(0.5, -18, 0, 30)
+			save.ZIndex = 171
+			save.Parent = funcPanel
+			round(save, UDim.new(0, 8))
+			applyPressEffect(save, 0.9)
+
+			local close = Instance.new("TextButton")
+			close.Text = T("float_close")
+			close.Font = Enum.Font.GothamBold
+			close.TextSize = 13
+			close.TextColor3 = WHITE
+			close.AutoButtonColor = false
+			close.BackgroundColor3 = COLOR_OFF
+			close.Position = UDim2.new(0.5, 6, 1, -40)
+			close.Size = UDim2.new(0.5, -18, 0, 30)
+			close.ZIndex = 171
+			close.Parent = funcPanel
+			round(close, UDim.new(0, 8))
+			applyPressEffect(close, 0.9)
+
+			save.Activated:Connect(function()
+				code = box.Text
+				Library.Notify(name, T("float_saved"), nil, 2.5)
+			end)
+			close.Activated:Connect(function() popClose(funcPanel) end)
+		end
+
+		-- لوحة الإعدادات
+		local function closePanel()
+			if not panelOpen then return end
+			panelOpen = false
+			popup(-1)
+			if funcPanel and funcPanel.Visible then popClose(funcPanel) end
+			popClose(panel)
+		end
+
+		local function buildPanel()
+			panel = Instance.new("Frame")
+			panel.BackgroundColor3 = COLOR_DARK
+			panel.AnchorPoint = Vector2.new(0.5, 0.5)
+			panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+			panel.Size = UDim2.new(0, 290, 0, 340)
+			panel.Active = true
+			panel.Visible = false
+			panel.ZIndex = 150
+			panel.Parent = screenGui
+			round(panel, UDim.new(0, 14))
+			stroke(panel, COLOR_PURPLE, 1.2, 0.3)
+
+			local handle = Instance.new("Frame")
+			handle.BackgroundColor3 = WHITE
+			handle.BackgroundTransparency = 0.93
+			handle.Size = UDim2.new(1, 0, 0, 32)
+			handle.ZIndex = 151
+			handle.Parent = panel
+			round(handle, UDim.new(0, 14))
+			newLabel(handle, T("float_title"), Enum.Font.GothamBold, 14, WHITE, UDim2.new(0, 14, 0, 0), UDim2.new(1, -60, 1, 0), Enum.TextXAlignment.Left, 152)
+			makeFrameDraggable(handle, panel, {})
+
+			local closeX = Instance.new("TextButton")
+			closeX.Text = "✕"
+			closeX.Font = Enum.Font.GothamBold
+			closeX.TextSize = 13
+			closeX.TextColor3 = WHITE
+			closeX.AutoButtonColor = false
+			closeX.BackgroundColor3 = COLOR_RED
+			closeX.AnchorPoint = Vector2.new(1, 0.5)
+			closeX.Position = UDim2.new(1, -8, 0.5, 0)
+			closeX.Size = UDim2.new(0, 22, 0, 22)
+			closeX.ZIndex = 153
+			closeX.Parent = handle
+			round(closeX, UDim.new(1, 0))
+			applyPressEffect(closeX, 0.85)
+			closeX.Activated:Connect(closePanel)
+
+			local scroll = Instance.new("ScrollingFrame")
+			scroll.BackgroundTransparency = 1
+			scroll.BorderSizePixel = 0
+			scroll.Position = UDim2.new(0, 10, 0, 40)
+			scroll.Size = UDim2.new(1, -20, 1, -48)
+			scroll.ScrollBarThickness = 3
+			scroll.ScrollBarImageColor3 = COLOR_PURPLE
+			scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+			scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			scroll.ZIndex = 151
+			scroll.Parent = panel
+			local sl = Instance.new("UIListLayout")
+			sl.Padding = UDim.new(0, 8)
+			sl.SortOrder = Enum.SortOrder.LayoutOrder
+			sl.Parent = scroll
+
+			local EF = makeElements(scroll, { accent = accent, window = ctx.window, popupDelta = ctx.popupDelta })
+			EF:CreateToggle(T("sb_enable"), T("sb_enable_desc"), enabled, function(v)
+				enabled = v
+				applyState(true)
+			end)
+			EF:CreateToggle(T("sb_hide"), T("sb_hide_desc"), hidden, function(v)
+				hidden = v
+				applyState(true)
+			end)
+			local nameBox = EF:CreateTextbox(T("float_name"), name, "text", function(v)
+				if v ~= "" then
+					name = tostring(v)
+					nameLbl.Text = name
+				end
+			end)
+			nameBox:Set(name)
+			EF:CreateColorPicker(T("float_border"), borderColor, function(c)
+				borderColor = c
+				bStroke.Color = c
+			end)
+			EF:CreateButton(T("float_func"), T("float_func_hint"), function()
+				if not funcPanel then buildFuncPanel() end
+				popOpen(funcPanel, UDim2.new(0, 300, 0, 250))
+			end)
+		end
+
+		gear.Activated:Connect(function()
+			if panelOpen then closePanel() return end
+			if not panel then buildPanel() end
+			panelOpen = true
+			popup(1)
+			panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+			popOpen(panel, UDim2.new(0, 290, 0, 340))
+		end)
+
+		api.Fire = fire
+		api.SetText = function(_, t) name = tostring(t); nameLbl.Text = name end
+		api.SetDesc = function(_, t) if descLbl then descLbl.Text = tostring(t) end end
+		api.SetEnabled = function(_, v) enabled = v and true or false; applyState(true) end
+		api.GetEnabled = function() return enabled end
+		api.SetHidden = function(_, v) hidden = v and true or false; applyState(true) end
+		api.SetColor = function(_, c) borderColor = resolveColor(c, borderColor); bStroke.Color = borderColor end
+		api.SetCode = function(_, c) code = tostring(c or "") end
+		api.SetCallback = function(_, f) callback = f end
+		api.Destroy = function()
+			if panelOpen then panelOpen = false; popup(-1) end
+			unregisterTarget(wrap)
+			if panel then panel:Destroy() end
+			if funcPanel then funcPanel:Destroy() end
+			wrap:Destroy()
+		end
 		return api
 	end
 
@@ -1587,6 +1923,7 @@ makeElements = function(container, ctx)
 
 	----------------------------------------------------------
 	-- قائمة منسدلة للأزرار: تقفلها = الأزرار تختفي، تفتحها = ترجع
+	-- عناصر القائمة: { Name=, Desc=, Callback= }  أو مع Settings=true لزر بإعدادات
 	function E:CreateFoldout(name, items, defaultOpen)
 		if type(name) == "table" then
 			local o = name
@@ -1656,13 +1993,16 @@ makeElements = function(container, ctx)
 
 		if type(items) == "table" then
 			for _, it in ipairs(items) do
-				if type(it) == "table" then E2:CreateButton(it) end
+				if type(it) == "table" then
+					if pick(it, "Settings", "HasSettings") then E2:CreateSettingsButton(it) else E2:CreateButton(it) end
+				end
 			end
 		end
 		refresh(false)
 
 		E2.Instance = wrap
 		E2.AddButton = function(_, ...) return E2:CreateButton(...) end
+		E2.AddSettingsButton = function(_, ...) return E2:CreateSettingsButton(...) end
 		E2.SetOpen = function(_, v) open = v and true or false; refresh(true) end
 		E2.Open = function() open = true; refresh(true) end
 		E2.Close = function() open = false; refresh(true) end
@@ -1762,6 +2102,7 @@ makeElements = function(container, ctx)
 
 	-- أسماء بديلة
 	E.Button, E.Toggle, E.Slider = E.CreateButton, E.CreateToggle, E.CreateSlider
+	E.SettingsButton = E.CreateSettingsButton
 	E.Input, E.Textbox, E.Dropdown = E.CreateTextbox, E.CreateTextbox, E.CreateDropdown
 	E.Colorpicker, E.ColorPicker = E.CreateColorPicker, E.CreateColorPicker
 	E.Note, E.Label, E.Foldout, E.Selector = E.CreateNote, E.CreateLabel, E.CreateFoldout, E.CreateSelector
@@ -1829,7 +2170,6 @@ Library.CreateFloatButton = function(...)
 	local api = { Instance = fb }
 	local panel, funcPanel
 
-	-- تشغيل الوظيفة: Callback من السكربت ثم الكود المكتوب بالخانة (لو موجود)
 	local function runCode()
 		if code == "" then return end
 		local loader = loadstring
@@ -1860,7 +2200,6 @@ Library.CreateFloatButton = function(...)
 		if not wasDragged then fire() end
 	end)
 
-	-- لوحة الوظيفة (خانة الكود)
 	local function buildFuncPanel()
 		funcPanel = Instance.new("Frame")
 		funcPanel.BackgroundColor3 = COLOR_DARK
@@ -1947,7 +2286,6 @@ Library.CreateFloatButton = function(...)
 		close.Activated:Connect(function() popClose(funcPanel) end)
 	end
 
-	-- لوحة الإعدادات (مثل لوحة الألوان بس بدون ألوان ثابتة)
 	local function buildPanel()
 		panel = Instance.new("Frame")
 		panel.BackgroundColor3 = COLOR_DARK
@@ -2054,7 +2392,7 @@ end
 --============================================================
 -- 11) إنشاء النافذة
 --============================================================
-local ELEMENT_KINDS = { "Button", "Toggle", "Slider", "Textbox", "Dropdown", "ColorPicker", "Note", "Label", "Foldout", "Selector" }
+local ELEMENT_KINDS = { "Button", "SettingsButton", "Toggle", "Slider", "Textbox", "Dropdown", "ColorPicker", "Note", "Label", "Foldout", "Selector" }
 
 -- Library.CreateButton(tab, ...) وما شابه
 for _, kind in ipairs(ELEMENT_KINDS) do
@@ -2072,10 +2410,15 @@ function Library.CreateWindow(config, ...)
 	config = config or {}
 	local title    = config.Title or "الواجهة الاحترافية"
 	local subTitle = config.SubTitle or ""
-	local hasTheme = config.Theme ~= nil
-	local baseColor = resolveColor(config.Theme, COLOR_GREEN)
+	-- اللون الافتراضي: Black
+	local baseColor = resolveColor(config.Theme, COLOR_BLACK)
 	local lum = 0.299 * baseColor.R + 0.587 * baseColor.G + 0.114 * baseColor.B
-	local accent = lum < 0.3 and baseColor:Lerp(WHITE, 0.55) or baseColor
+	local accent
+	if config.Theme == nil then
+		accent = COLOR_GREEN
+	else
+		accent = lum < 0.3 and baseColor:Lerp(WHITE, 0.55) or baseColor
+	end
 	local sizeX = (config.Size and config.Size.X) or 586
 	local sizeY = (config.Size and config.Size.Y) or 339
 	local vs = screenGui.AbsoluteSize
@@ -2084,7 +2427,7 @@ function Library.CreateWindow(config, ...)
 
 	-- لون الإشعارات = لون الواجهة
 	themeState.accent = accent
-	themeState.base = hasTheme and baseColor or Color3.fromRGB(120, 50, 220)
+	themeState.base = baseColor
 
 	local Window = { Tabs = {}, Version = LIB_VERSION, _sig = WINDOW_SIG }
 
@@ -2143,7 +2486,7 @@ function Library.CreateWindow(config, ...)
 	mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 	mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 	mainFrame.BackgroundColor3 = baseColor
-	mainFrame.BackgroundTransparency = hasTheme and 0.2 or 0.55
+	mainFrame.BackgroundTransparency = 0.12
 	mainFrame.BorderSizePixel = 0
 	mainFrame.ClipsDescendants = true
 	mainFrame.Visible = false
@@ -2169,22 +2512,15 @@ function Library.CreateWindow(config, ...)
 
 	local bgGradient = Instance.new("UIGradient")
 	bgGradient.Rotation = 45
-	bgGradient.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, hasTheme and 0 or 0.25), NumberSequenceKeypoint.new(1, hasTheme and 0 or 0.25) })
+	bgGradient.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 0) })
 	bgGradient.Parent = mainFrame
 
-	if hasTheme then
-		animateGradient(bgGradient, {
-			ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(215, 215, 215)) }),
-			ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(225, 225, 225)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)) }),
-			ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(245, 245, 245)), ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 220, 220)) }),
-		}, 4.5)
-	else
-		animateGradient(bgGradient, {
-			ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 50, 220)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(90, 40, 170)), ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 70, 255)) }),
-			ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(160, 80, 255)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(110, 50, 200)), ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 60, 230)) }),
-			ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(140, 60, 235)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(100, 45, 185)), ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 90, 255)) }),
-		}, 4.5)
-	end
+	-- حركة لطيفة بالتدرج (تتضاعف مع لون الواجهة، فالأسود يبقى أسود)
+	animateGradient(bgGradient, {
+		ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(215, 215, 215)) }),
+		ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(225, 225, 225)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)) }),
+		ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(245, 245, 245)), ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 220, 220)) }),
+	}, 4.5)
 
 	----------------------------------------------------------
 	-- شريط العنوان
@@ -2371,7 +2707,7 @@ function Library.CreateWindow(config, ...)
 		tween(openButton, EASE_FAST, { Size = UDim2.new(0, 0, 0, 0) })
 		task.delay(0.15, function() if isOpen then openButton.Visible = false end end)
 
-		mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+		-- يفتح من مكانه الأخير (لو انسحبت الواجهة) بدل ما يرجع للنص
 		mainFrame.Size = UDim2.new(0, 0, 0, 0)
 		mainFrame.Rotation = -6
 		mainFrame.Visible = true
@@ -2445,21 +2781,12 @@ function Library.CreateWindow(config, ...)
 	deleteButton.Activated:Connect(askDeleteConfirmation)
 
 	----------------------------------------------------------
-	-- سحب النافذة بإصبع واحد (يتجمّد لما تكون نافذة منبثقة مفتوحة)
+	-- سحب النافذة بإصبع واحد (مصحّح: بدون تغيير حجم أثناء السحب، وبعتبة حركة)
+	-- يتجمّد لما تكون نافذة منبثقة مفتوحة
 	----------------------------------------------------------
-	local windowDragging = false
 	makeFrameDraggable(topBar, mainFrame, {
+		Threshold = 6,
 		CanDrag = function() return openPopupCount == 0 end,
-		OnBegin = function()
-			windowDragging = true
-			tween(mainFrame, EASE_FAST, { Size = UDim2.new(0, sizeX - 8, 0, logicalHeight() - 6) })
-		end,
-		OnEnd = function()
-			if windowDragging then
-				windowDragging = false
-				tween(mainFrame, EASE_BOUNCE, { Size = UDim2.new(0, sizeX, 0, logicalHeight()) })
-			end
-		end,
 	})
 
 	----------------------------------------------------------
@@ -2566,7 +2893,7 @@ function Library.CreateWindow(config, ...)
 
 	-- إنشاء عنصر داخل تبويب باسمه:
 	--   Window:CreateButton("اسم التبويب", "اسم الزر", "وصف", function() end)
-	--   Window:CreateFoldout({Tab="اسم التبويب", Name="قائمة", Buttons={...}})
+	--   Window:CreateSettingsButton("اسم التبويب", "اسم الزر", "وصف", function() end)
 	for _, kind in ipairs(ELEMENT_KINDS) do
 		Window["Create" .. kind] = function(self, tab, ...)
 			local args = { ... }
@@ -2618,43 +2945,41 @@ return Library
 	local Library = getgenv().ProUILibrary
 
 	local Window = Library.CreateWindow({
-		Title = "الواجهة الاحترافية", SubTitle = "v3",
-		Theme = "Green",
+		Title = "الواجهة الاحترافية", SubTitle = "v3.1",
+		-- Theme غير مكتوب = Black (الافتراضي)
 		OpenButton = { Text = "OPEN", Color = "Blue" },
 		Splash = { Text = "Rwonom hub", Color = "Red" },
 	})
 
-	-- تبويب (الإيموجي بالمعامل الثاني)
 	local Main = Window:CreateTab("الرئيسية", "🏠")
 
 	Main:CreateLabel("مرحباً بك", { Bold = true, TextSize = 16 })
-
 	Main:CreateNote("تنبيه", "ملاحظة بلون درك", "Dark")
-	Main:CreateNote("معلومة", "ملاحظة بلون أزرق", "Blue")
 
-	-- قائمة منسدلة للأزرار (اقفلها وافتحها)
+	-- 1) زر عادي داخل الواجهة
+	Main:CreateButton("زر عادي", "وصف", function() print("normal") end)
+
+	-- 2) زر بإعدادات ⚙ داخل الواجهة
+	--    داخل الإعدادات: تفعيل الزر (توجل) + إخفاء الزر (توجل) + الاسم + لون الحاجز + كود الوظيفة
+	Main:CreateSettingsButton("زر بإعدادات", "اضغط ⚙", function() print("settings btn") end,
+		{ Color = "purple", Enabled = true })
+
+	-- قائمة منسدلة (Settings=true = زر بإعدادات)
 	local group = Main:CreateFoldout("أزرار الحماية", {
 		{ Name = "زر 1", Desc = "وصف", Callback = function() print(1) end },
-		{ Name = "زر 2", Callback = function() print(2) end },
+		{ Name = "زر 2", Settings = true, Callback = function() print(2) end },
 	}, true)
-	group:AddButton("زر 3", nil, function() print(3) end)
 
-	-- خيارات بالنص: كل خيار له صفحة أزرار
 	local sel = Main:CreateSelector({ "عام", "متقدم" }, function(name) print(name) end)
 	sel.Pages["عام"]:CreateButton("زر بصفحة عام", function() end)
-	sel.Pages["متقدم"]:CreateToggle("خيار متقدم", false, function(v) end)
+	sel.Pages["متقدم"]:CreateSettingsButton("زر بإعدادات", function() end)
 
-	-- زر عايم (يسار الشاشة) — الوظيفة من السكربت أو من خانة الكود بإعداداته (⚙)
+	-- زر عايم (يسار الشاشة) — لسه موجود
 	Library.CreateFloatButton({ Name = "Fly", Callback = function() print("fly") end })
 
-	-- إشعار عادي (اضغط عليه = يشتغل الـ callback ويختفي)
 	Library.Notify("تم", "تم الضغط", "وصف صغير", 4, function() print("clicked") end)
-
-	-- إشعار بصور (حد أقصى 3)
 	Library.NotifyImage("صور", "إشعار فيه صور", { 6034287594, 6031094678, 6031280882 }, "وصف", 5)
 
-	-- تدرجين فوق بعض على حواف الواجهة
 	Library.AddGradient({ Target = "WindowBorder", Colors = {"blue","purple"}, Speed = 90, Strength = 1 })
-	Library.AddGradient({ Target = "WindowBorder", Colors = {"green","cyan"}, Speed = -50, Strength = 0.6 })
 	Library.AddGradient({ Target = "FloatButtonBorder", Colors = {"red","orange"}, Speed = 120 })
 ]]
